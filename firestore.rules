@@ -1,0 +1,121 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isTeacher() {
+      return getUserData().role == 'teacher';
+    }
+
+    function isStudent() {
+      return getUserData().role == 'student';
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId);
+    }
+
+    // Classrooms collection
+    match /classrooms/{classroomId} {
+      // Teachers can read and write their own classrooms
+      allow read: if isAuthenticated() && (
+        isTeacher() || 
+        exists(/databases/$(database)/documents/classrooms/$(classroomId)/students/$(request.auth.uid))
+      );
+      allow write: if isAuthenticated() && isTeacher();
+
+      // Nested collections in classrooms
+      match /students/{studentId} {
+        allow read: if isAuthenticated() && (
+          isTeacher() || 
+          isOwner(studentId)
+        );
+        allow write: if isAuthenticated() && isTeacher();
+      }
+
+      match /submissions/{submissionId} {
+        allow read: if isAuthenticated() && (
+          isTeacher() || 
+          resource.data.studentId == request.auth.uid
+        );
+        allow write: if isAuthenticated() && (
+          isTeacher() || 
+          request.resource.data.studentId == request.auth.uid
+        );
+      }
+
+      // Add progress subcollection rules
+      match /progress/{progressId} {
+        allow read: if isAuthenticated() && (
+          isTeacher() || 
+          exists(/databases/$(database)/documents/classrooms/$(classroomId)/students/$(request.auth.uid))
+        );
+        allow write: if isAuthenticated() && isTeacher();
+      }
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        (isTeacher() && resource.data.teacherId == request.auth.uid)
+      );
+      allow write: if isAuthenticated() && (
+        isTeacher() || 
+        request.resource.data.userId == request.auth.uid
+      );
+    }
+
+    // Student Stats collection
+    match /studentStats/{userId} {
+      allow read: if isAuthenticated() && (
+        isOwner(userId) || 
+        isTeacher()
+      );
+      allow write: if isAuthenticated() && (
+        isOwner(userId) || 
+        isTeacher()
+      );
+    }
+
+    // Analytics collection
+    match /analytics/{docId} {
+      allow read: if isAuthenticated() && isTeacher();
+      allow write: if isAuthenticated() && isTeacher();
+      
+      match /{document=**} {
+        allow read: if isAuthenticated() && isTeacher();
+        allow write: if isAuthenticated() && isTeacher();
+      }
+    }
+
+    // Projects collection
+    match /projects/{projectId} {
+      allow read: if isAuthenticated() && 
+        (resource.data.studentId == request.auth.uid || 
+         resource.data.teacherId == request.auth.uid);
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() && 
+        (resource.data.studentId == request.auth.uid);
+    }
+
+    // Challenges collection
+    match /challenges/{challengeId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isTeacher();
+    }
+  }
+} 
